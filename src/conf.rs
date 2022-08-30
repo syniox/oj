@@ -1,10 +1,11 @@
 use clap::Parser;
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
 
 fn default_bind_address() -> String {
     "127.0.0.1".to_string()
 }
-fn default_bind_port() -> i32 {
+fn default_bind_port() -> u16 {
     12345
 }
 
@@ -29,12 +30,18 @@ pub enum ProblemType {
     DynamicRanking,
 }
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all="snake_case")]
+pub enum MiscType {
+    SpecialJudge(Vec<String>),
+    Packing(Vec<Vec<i32>>),
+    DynamicRankingRatio(i32),
+}
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Problem {
     pub id: i32,
     pub name: String,
     pub r#type: ProblemType,
-    #[serde(default)]
-    pub misc: String,
+    pub misc: HashMap<String, MiscType>,
     pub cases: Vec<Case>,
 }
 
@@ -43,7 +50,7 @@ pub struct Server {
     #[serde(default = "default_bind_address")]
     pub bind_address: String,
     #[serde(default = "default_bind_port")]
-    pub bind_port: i32,
+    pub bind_port: u16,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -58,7 +65,7 @@ pub struct Case {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Language {
     pub name: String, // Switch to enum?
-    pub file_anme: String,
+    pub file_name: String,
     pub command: Vec<String>,
 }
 
