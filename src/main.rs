@@ -2,6 +2,9 @@ use actix_web::{get, middleware::Logger, post, web, App, HttpServer, Responder};
 use env_logger;
 use log;
 
+mod conf;
+mod utils;
+
 #[get("/hello/{name}")]
 async fn greet(name: web::Path<String>) -> impl Responder {
     log::info!(target: "greet_handler", "Greeting {}", name);
@@ -19,6 +22,7 @@ async fn exit() -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    let conf = conf::Conf::parse()?;
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     HttpServer::new(|| {
