@@ -4,6 +4,8 @@ use log;
 
 mod conf;
 mod utils;
+mod judge;
+mod err;
 
 #[get("/hello/{name}")]
 async fn greet(name: web::Path<String>) -> impl Responder {
@@ -31,6 +33,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger::default())
             .route("/hello", web::get().to(|| async { "Hello World!" }))
             .service(greet)
+            .service(judge::post_jobs)
             // DO NOT REMOVE: used in automatic testing
             .service(exit)
     })
