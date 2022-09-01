@@ -21,7 +21,7 @@ pub struct Args {
     flush: bool
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all="snake_case")]
 pub enum ProblemType {
     Standard,
@@ -29,14 +29,14 @@ pub enum ProblemType {
     Spj,
     DynamicRanking,
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all="snake_case")]
 pub enum MiscType {
     SpecialJudge(Vec<String>),
     Packing(Vec<Vec<i32>>),
     DynamicRankingRatio(i32),
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Problem {
     pub id: i32,
     pub name: String,
@@ -45,7 +45,7 @@ pub struct Problem {
     pub cases: Vec<Case>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Server {
     #[serde(default = "default_bind_address")]
     pub bind_address: String,
@@ -53,7 +53,7 @@ pub struct Server {
     pub bind_port: u16,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Case {
     pub score: f64,
     pub input_file: String,
@@ -62,14 +62,14 @@ pub struct Case {
     pub memory_limit: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Language {
     pub name: String, // Switch to enum?
     pub file_name: String,
     pub command: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Conf {
     pub server: Server,
     pub problems: Vec<Problem>,

@@ -25,11 +25,13 @@ async fn exit() -> impl Responder {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let conf = conf::Conf::parse()?;
+    let server = conf.server.clone();
     println!("{:?}", conf);
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
-    HttpServer::new(|| {
+    HttpServer::new(move || {
         App::new()
+            .app_data(web::Data::new(conf.clone()))
             .wrap(Logger::default())
             .route("/hello", web::get().to(|| async { "Hello World!" }))
             .service(greet)
@@ -37,7 +39,7 @@ async fn main() -> std::io::Result<()> {
             // DO NOT REMOVE: used in automatic testing
             .service(exit)
     })
-    .bind((conf.server.bind_address, conf.server.bind_port))?
+    .bind((server.bind_address, server.bind_port))?
     .run()
     .await
 }
