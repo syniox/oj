@@ -1,6 +1,7 @@
 use actix_web::{
-    error, HttpResponse,
+    error,
     http::{header::ContentType, StatusCode},
+    HttpResponse,
 };
 use derive_more::{Display, Error};
 use serde::Serialize;
@@ -18,7 +19,7 @@ pub enum ErrorKind {
 
 impl ErrorKind {
     fn get_code(&self) -> u8 {
-        match *self{
+        match *self {
             Self::ErrInvalidArgument => 1,
             Self::ErrInvalidState => 2,
             Self::ErrNotFound => 3,
@@ -44,7 +45,11 @@ impl std::fmt::Display for Error {
 
 impl Error {
     pub fn new(reason: ErrorKind, message: String) -> Self {
-        Self { code: reason.get_code(), reason: reason, message: message}
+        Self {
+            code: reason.get_code(),
+            reason: reason,
+            message: message,
+        }
     }
 }
 

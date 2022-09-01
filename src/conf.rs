@@ -1,5 +1,5 @@
 use clap::Parser;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 fn default_bind_address() -> String {
@@ -15,14 +15,14 @@ pub struct Args {
     /// Read config file
     #[clap(short, long)]
     config: String,
-    
+
     /// Flush data when started
-    #[clap(short, long="flush-data")]
-    flush: bool
+    #[clap(short, long = "flush-data")]
+    flush: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(rename_all="snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum ProblemType {
     Standard,
     Strict,
@@ -30,7 +30,7 @@ pub enum ProblemType {
     DynamicRanking,
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
-#[serde(rename_all="snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum MiscType {
     SpecialJudge(Vec<String>),
     Packing(Vec<Vec<i32>>),

@@ -3,9 +3,9 @@ use env_logger;
 use log;
 
 mod conf;
-mod utils;
-mod judge;
 mod err;
+mod judge;
+mod utils;
 
 #[get("/hello/{name}")]
 async fn greet(name: web::Path<String>) -> impl Responder {
