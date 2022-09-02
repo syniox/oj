@@ -13,7 +13,7 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[allow(dead_code)]
 enum State {
     Queueing,
@@ -22,44 +22,49 @@ enum State {
     Canceled,
 }
 
-#[derive(Clone, Serialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
 #[allow(dead_code)]
 enum CaseResult {
-    Waiting,
-    Running,
-    Accepted,
-    #[serde(rename = "Compilation Error")]
-    CompilationError,
+    Accepted = 0,
     #[serde(rename = "Compilation Success")]
-    CompilationSuccess,
+    CompilationSuccess = 1,
+    Waiting = 2,
     #[serde(rename = "Wrong Answer")]
-    WrongAnswer,
+    WrongAnswer = 3,
     #[serde(rename = "Runtime Error")]
-    RuntimeError,
-    #[serde(rename = "Time Limit Exeeded")]
-    TimeLimitExceeded,
+    RuntimeError = 4,
+    #[serde(rename = "Time Limit Exceeded")]
+    TimeLimitExceeded = 5,
+    #[serde(rename = "Compilation Error")]
+    CompilationError = 6,
+    Running,
     #[serde(rename = "Memory Limit Exceeded")]
     MemoryLimitExceeded,
     #[serde(rename = "System Error")]
     SystemError,
     #[serde(rename = "SPJ Error")]
     SPJError,
+    Skipped,
+    #[default]
+    UnInitialized,
 }
 
 impl CaseResult {
     fn priority(&self) -> u32 {
         match *self {
-            Self::Accepted => 1,
-            Self::WrongAnswer => 2,
-            Self::RuntimeError => 3,
-            Self::TimeLimitExceeded => 4,
-            Self::CompilationError => 5,
+            Self::Waiting => 0,
+            Self::CompilationSuccess => 1,
+            Self::Accepted => 2,
+            Self::WrongAnswer => 3,
+            Self::RuntimeError => 4,
+            Self::TimeLimitExceeded => 5,
+            Self::CompilationError => 6,
             _ => unreachable!(),
         }
     }
 }
 
-#[derive(Serialize)]
+#[derive(Default, Serialize)]
 struct Case {
     id: i32,
     result: CaseResult,
@@ -108,7 +113,7 @@ impl PostJobRes {
     fn load_cases(&mut self, cases: Vec<Case>, prob: &Problem) {
         let mut result = CaseResult::Accepted;
         let mut score = 0f64;
-        for (case_res, case_cfg) in cases.iter().zip(prob.cases.iter()) {
+        for (case_res, case_cfg) in cases.iter().skip(1).zip(prob.cases.iter()) {
             if result.priority() < case_res.result.priority() {
                 result = case_res.result.clone();
             }
@@ -117,6 +122,10 @@ impl PostJobRes {
             }
         }
         self.state = State::Finished;
+        log::info!("cases[0].result: {:?}", cases[0].result);
+        if cases[0].result == CaseResult::CompilationError {
+            result = CaseResult::CompilationError;
+        }
         self.result = result;
         self.score = score;
         self.cases = cases;
@@ -133,10 +142,11 @@ fn check_contest(conf: &Conf, job: &PostJob) -> Result<(), err::Error> {
     // TODO
     Ok(())
 }
-fn check_prob_id(conf: &Conf, id: i32) -> Result<(), err::Error> {
+fn check_prob_and_get(conf: &Conf, id: i32) -> Result<&Problem, err::Error> {
     for prob in conf.problems.iter() {
         if id == prob.id {
-            return Ok(());
+            log::info!("id: {}, prob_id: {}", id, prob.id);
+            return Ok(&prob);
         }
     }
     Err(err::Error::new(err::ErrorKind::ErrNotFound, String::new()))
@@ -155,7 +165,8 @@ fn judge(dir: tempdir::TempDir, prob: &Problem) -> Vec<Case> {
     let exe_path = dir.path().join("code");
     log::info!("exe_path: {:?}", exe_path);
     //sleep(60u64, 0u32);
-    prob.cases
+    let mut res: Vec<Case> = prob
+        .cases
         .iter()
         .enumerate()
         .map(|(id, case)| {
@@ -183,17 +194,16 @@ fn judge(dir: tempdir::TempDir, prob: &Problem) -> Vec<Case> {
                 None => CaseResult::TimeLimitExceeded,
                 Some(x) if x > 0 => CaseResult::RuntimeError,
                 Some(0) => {
-                    let ans = fs::read_to_string(&case.answer_file);
                     let status = match prob.r#type {
                         ProblemType::Standard => Command::new("diff")
                             .args(["-w", &case.answer_file, out_path.to_str().unwrap()])
                             .status()
                             .expect("diff error"),
                         ProblemType::Strict => Command::new("diff")
-                            .args(["-w", &case.answer_file, out_path.to_str().unwrap()])
+                            .args([&case.answer_file, out_path.to_str().unwrap()])
                             .status()
                             .expect("diff error"),
-                        _ => unreachable!(),
+                        _ => todo!(),
                     };
                     if status.code().unwrap() == 0 {
                         CaseResult::Accepted
@@ -201,26 +211,35 @@ fn judge(dir: tempdir::TempDir, prob: &Problem) -> Vec<Case> {
                         CaseResult::WrongAnswer
                     }
                 }
-                _ => unreachable!(),
+                _ => unreachable!("ret_code"),
             };
             let time = now.elapsed().as_micros();
             Case {
-                id: id as i32,
+                id: (id + 1) as i32,
                 result: case_res,
                 time: time as u64,
                 memory: 0,
                 info: String::new(),
             }
         })
-        .collect()
+        .collect();
+    // add Compilation result
+    res.insert(
+        0usize,
+        Case {
+            result: CaseResult::CompilationSuccess,
+            ..Default::default()
+        },
+    );
+    res
 }
 
 #[post("/jobs")]
 async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<impl Responder> {
     let job = body.into_inner();
     check_contest(&conf, &job)?;
-    check_prob_id(&conf, job.problem_id)?;
     check_language(&conf, &job)?;
+    let prob = check_prob_and_get(&conf, job.problem_id)?;
     // Compile
     let dir = tempdir::TempDir::new("oj")?;
     let file_path = dir.path().join("code.txt");
@@ -231,6 +250,7 @@ async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<im
         .find(|x| x.name == job.language.as_str());
     match lang {
         None => return err::actix_err(err::ErrorKind::ErrInvalidArgument, String::new()),
+        // CE testing
         Some(lang) => {
             let cmd = lang.command.clone();
             let cmd = cmd
@@ -242,18 +262,28 @@ async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<im
                 })
                 .collect::<Vec<String>>();
             log::info!("cmd: {:?}", cmd);
-            let status = Command::new(&cmd[0])
-                .args(&cmd[1..])
-                .status()?;
+            let status = Command::new(&cmd[0]).args(&cmd[1..]).status()?;
             log::info!("status: {:?},", status);
             if !status.success() {
                 // TODO Compilation Error
-                return err::actix_err(err::ErrorKind::ErrInternal, "Compilation Error".to_string());
+                let mut job_res = PostJobRes::new(job);
+                let mut cases = vec![Case {
+                    result: CaseResult::CompilationError,
+                    ..Default::default()
+                }];
+                for id in 1..=prob.cases.len() {
+                    cases.push(Case {
+                        id: id as i32,
+                        result: CaseResult::Waiting,
+                        ..Default::default()
+                    });
+                }
+                job_res.load_cases(cases, prob);
+                return Ok(web::Json(job_res));
             }
         }
     };
     // Run
-    let prob = &conf.problems[job.problem_id as usize];
     let cases = judge(dir, prob);
     let mut job_res = PostJobRes::new(job);
     job_res.load_cases(cases, prob);
