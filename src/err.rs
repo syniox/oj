@@ -68,3 +68,7 @@ impl error::ResponseError for Error {
             .body(self.to_string())
     }
 }
+
+pub fn actix_err<T>(kind: ErrorKind, msg: String) -> Result<T, error::Error> {
+    Err(Error::new(kind, msg).into())
+}

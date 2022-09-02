@@ -1,6 +1,6 @@
 use crate::{
     conf::{Conf, Problem, ProblemType},
-    err
+    err,
 };
 use actix_web::http::StatusCode;
 use actix_web::{post, web, HttpResponse, Responder, Result};
@@ -108,7 +108,7 @@ impl PostJobRes {
     fn load_cases(&mut self, cases: Vec<Case>, prob: &Problem) {
         let mut result = CaseResult::Accepted;
         let mut score = 0f64;
-        for (case_res,case_cfg) in cases.iter().zip(prob.cases.iter()) {
+        for (case_res, case_cfg) in cases.iter().zip(prob.cases.iter()) {
             if result.priority() < case_res.result.priority() {
                 result = case_res.result.clone();
             }
@@ -185,18 +185,14 @@ fn judge(dir: tempdir::TempDir, prob: &Problem) -> Vec<Case> {
                 Some(0) => {
                     let ans = fs::read_to_string(&case.answer_file);
                     let status = match prob.r#type {
-                        ProblemType::Standard => {
-                            Command::new("diff")
-                                .args(["-w", &case.answer_file, out_path.to_str().unwrap()])
-                                .status()
-                                .expect("diff error")
-                        }
-                        ProblemType::Strict => {
-                            Command::new("diff")
-                                .args(["-w", &case.answer_file, out_path.to_str().unwrap()])
-                                .status()
-                                .expect("diff error")
-                        }
+                        ProblemType::Standard => Command::new("diff")
+                            .args(["-w", &case.answer_file, out_path.to_str().unwrap()])
+                            .status()
+                            .expect("diff error"),
+                        ProblemType::Strict => Command::new("diff")
+                            .args(["-w", &case.answer_file, out_path.to_str().unwrap()])
+                            .status()
+                            .expect("diff error"),
                         _ => unreachable!(),
                     };
                     if status.code().unwrap() == 0 {
@@ -229,13 +225,32 @@ async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<im
     let dir = tempdir::TempDir::new("oj")?;
     let file_path = dir.path().join("code.txt");
     fs::write(&file_path, &job.source_code)?;
-    // TODO Rewrite compile command
-    let _status = match job.language.as_str() {
-        "Rust" => Command::new("rustc")
-            .arg(file_path.to_str().unwrap())
-            .args(["-o", dir.path().join("code").to_str().unwrap()])
-            .status()?,
-        _ => unimplemented!(),
+    let lang = conf
+        .languages
+        .iter()
+        .find(|x| x.name == job.language.as_str());
+    match lang {
+        None => return err::actix_err(err::ErrorKind::ErrInvalidArgument, String::new()),
+        Some(lang) => {
+            let cmd = lang.command.clone();
+            let cmd = cmd
+                .into_iter()
+                .map(|x| match x.as_str() {
+                    "%INPUT%" => file_path.to_str().unwrap().to_string(),
+                    "%OUTPUT%" => dir.path().join("code").to_str().unwrap().to_string(),
+                    _ => x,
+                })
+                .collect::<Vec<String>>();
+            log::info!("cmd: {:?}", cmd);
+            let status = Command::new(&cmd[0])
+                .args(&cmd[1..])
+                .status()?;
+            log::info!("status: {:?},", status);
+            if !status.success() {
+                // TODO Compilation Error
+                return err::actix_err(err::ErrorKind::ErrInternal, "Compilation Error".to_string());
+            }
+        }
     };
     // Run
     let prob = &conf.problems[job.problem_id as usize];
