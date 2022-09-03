@@ -1,5 +1,5 @@
 use crate::{
-    conf::{Conf, Problem, ProblemType},
+    conf::{Conf, Language, Problem, ProblemType},
     err,
 };
 use actix_web::http::StatusCode;
@@ -151,10 +151,10 @@ fn check_prob_and_get(conf: &Conf, id: i32) -> Result<&Problem, err::Error> {
     }
     Err(err::Error::new(err::ErrorKind::ErrNotFound, String::new()))
 }
-fn check_language(conf: &Conf, job: &PostJob) -> Result<(), err::Error> {
+fn check_lang_and_get<'a>(conf: &'a Conf, job: &PostJob) -> Result<&'a Language, err::Error> {
     for lang in conf.languages.iter() {
         if lang.name == job.language {
-            return Ok(());
+            return Ok(lang);
         }
     }
     Err(err::Error::new(err::ErrorKind::ErrNotFound, String::new()))
@@ -238,51 +238,43 @@ fn judge(dir: tempdir::TempDir, prob: &Problem) -> Vec<Case> {
 async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<impl Responder> {
     let job = body.into_inner();
     check_contest(&conf, &job)?;
-    check_language(&conf, &job)?;
+    let lang = check_lang_and_get(&conf, &job)?;
     let prob = check_prob_and_get(&conf, job.problem_id)?;
     // Compile
     let dir = tempdir::TempDir::new("oj")?;
-    let file_path = dir.path().join("code.txt");
+    let file_path = dir.path().join(&lang.file_name);
     fs::write(&file_path, &job.source_code)?;
-    let lang = conf
-        .languages
-        .iter()
-        .find(|x| x.name == job.language.as_str());
-    match lang {
-        None => return err::actix_err(err::ErrorKind::ErrInvalidArgument, String::new()),
-        // CE testing
-        Some(lang) => {
-            let cmd = lang.command.clone();
-            let cmd = cmd
-                .into_iter()
-                .map(|x| match x.as_str() {
-                    "%INPUT%" => file_path.to_str().unwrap().to_string(),
-                    "%OUTPUT%" => dir.path().join("code").to_str().unwrap().to_string(),
-                    _ => x,
-                })
-                .collect::<Vec<String>>();
-            log::info!("cmd: {:?}", cmd);
-            let status = Command::new(&cmd[0]).args(&cmd[1..]).status()?;
-            log::info!("status: {:?},", status);
-            if !status.success() {
-                // TODO Compilation Error
-                let mut job_res = PostJobRes::new(job);
-                let mut cases = vec![Case {
-                    result: CaseResult::CompilationError,
+    {
+        let cmd = lang.command.clone();
+        let cmd = cmd
+            .into_iter()
+            .map(|x| match x.as_str() {
+                "%INPUT%" => file_path.to_str().unwrap().to_string(),
+                "%OUTPUT%" => dir.path().join("code").to_str().unwrap().to_string(),
+                _ => x,
+            })
+            .collect::<Vec<String>>();
+        log::info!("cmd: {:?}", cmd);
+        let status = Command::new(&cmd[0]).args(&cmd[1..]).status()?;
+        log::info!("status: {:?},", status);
+        if !status.success() {
+            // TODO Compilation Error
+            let mut job_res = PostJobRes::new(job);
+            let mut cases = vec![Case {
+                result: CaseResult::CompilationError,
+                ..Default::default()
+            }];
+            for id in 1..=prob.cases.len() {
+                cases.push(Case {
+                    id: id as i32,
+                    result: CaseResult::Waiting,
                     ..Default::default()
-                }];
-                for id in 1..=prob.cases.len() {
-                    cases.push(Case {
-                        id: id as i32,
-                        result: CaseResult::Waiting,
-                        ..Default::default()
-                    });
-                }
-                job_res.load_cases(cases, prob);
-                return Ok(web::Json(job_res));
+                });
             }
+            job_res.load_cases(cases, prob);
+            return Ok(web::Json(job_res));
         }
-    };
+    }
     // Run
     let cases = judge(dir, prob);
     let mut job_res = PostJobRes::new(job);
