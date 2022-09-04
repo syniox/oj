@@ -135,6 +135,7 @@ async fn put_job(job_id: web::Path<i32>, conf: web::Data<Conf>) -> Result<impl R
     } else {
         raise_err!(err::ErrorKind::ErrNotFound, "Job {} not found.", job_id)
     };
+    drop(set);
     if job_res.state != State::Finished {
         raise_err!(err::ErrorKind::ErrInvalidState, "Job {} not finished.", job_id)
     }
