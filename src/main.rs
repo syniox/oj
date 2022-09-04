@@ -6,6 +6,7 @@ mod conf;
 mod err;
 mod judge;
 mod utils;
+mod db;
 
 #[get("/hello/{name}")]
 async fn greet(name: web::Path<String>) -> impl Responder {
