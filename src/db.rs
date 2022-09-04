@@ -1,5 +1,6 @@
 use crate::{
     conf::Problem,
+    err,
     judge::{CaseRes, CaseResult, PostJob, State},
 };
 use actix_web::{get, web, Responder, Result};
@@ -14,7 +15,7 @@ lazy_static! {
     static ref JOB_SET: Arc<Mutex<BTreeSet<PostJobRes>>> = Arc::new(Mutex::new(BTreeSet::new()));
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PostJobRes {
     id: i32,
     created_time: String, //chrono::DateTime<chrono::Utc>
@@ -30,7 +31,7 @@ impl PostJobRes {
     pub fn new(job: PostJob) -> Self {
         let time = chrono::Utc::now().to_string();
         Self {
-            id: 0,
+            id: JOB_SET.lock().unwrap().len() as i32,
             created_time: time.clone(),
             updated_time: time,
             submission: job,
@@ -65,14 +66,16 @@ impl PostJobRes {
 impl std::cmp::PartialEq for PostJobRes {
     fn eq(&self, other: &Self) -> bool {
         // TODO: is this enough?
-        self.created_time == other.created_time
+        // self.created_time == other.created_time
+        self.id == other.id
     }
 }
 impl std::cmp::Eq for PostJobRes {}
 impl std::cmp::PartialOrd for PostJobRes {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         // TODO check whether bigger one becomes first
-        Some(self.created_time.cmp(&other.created_time))
+        // Some(self.created_time.cmp(&other.created_time))
+        Some(self.id.cmp(&other.id))
     }
 }
 impl std::cmp::Ord for PostJobRes {
@@ -100,6 +103,22 @@ pub async fn upd_jobs(job_res: PostJobRes) -> Result<impl Responder> {
     let mut set = JOB_SET.lock().unwrap();
     set.replace(job_res);
     Ok(actix_web::HttpResponse::Ok())
+}
+
+#[get("/jobs/{job_id}")]
+async fn get_job(job_id: web::Path<i32>) -> Result<impl Responder> {
+    let set = JOB_SET.lock().unwrap();
+    let ls: Vec<_> = set.iter().filter(|x| x.id == job_id.clone()).collect();
+    assert!(ls.len() <= 1);
+    if let Some(&job) = ls.get(0) {
+        Ok(web::Json(job.clone()))
+    } else {
+        Err(err::Error::new(
+            err::ErrorKind::ErrNotFound,
+            format!("Job {} not found.", job_id),
+        )
+        .into())
+    }
 }
 
 #[get("/jobs")]

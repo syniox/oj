@@ -38,6 +38,7 @@ async fn main() -> std::io::Result<()> {
             .service(greet)
             .service(judge::post_jobs)
             .service(db::get_jobs)
+            .service(db::get_job)
             // DO NOT REMOVE: used in automatic testing
             .service(exit)
     })
