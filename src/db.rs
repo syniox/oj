@@ -1,21 +1,23 @@
 use crate::{
-    conf::Problem,
-    err,
-    judge::{CaseRes, CaseResult, PostJob, State},
+    conf::{Conf, Problem},
+    err, err::raise_err,
+    judge::{CaseRes, CaseResult, PostJob, State, judge},
 };
-use actix_web::{get, web, Responder, Result};
+use actix_web::{get, put, web, Responder, Result};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 // use chrono::DateTime;
 
+
 // Judge related
 lazy_static! {
+    // TODO: big to small not small to big
     static ref JOB_SET: Arc<Mutex<BTreeSet<PostJobRes>>> = Arc::new(Mutex::new(BTreeSet::new()));
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct PostJobRes {
     id: i32,
     created_time: String, //chrono::DateTime<chrono::Utc>
@@ -99,7 +101,7 @@ struct JobQuery {
     result: Option<CaseResult>,
 }
 
-pub async fn upd_jobs(job_res: PostJobRes) -> Result<impl Responder> {
+pub async fn upd_job(job_res: PostJobRes) -> Result<impl Responder> {
     let mut set = JOB_SET.lock().unwrap();
     set.replace(job_res);
     Ok(actix_web::HttpResponse::Ok())
@@ -121,15 +123,38 @@ async fn get_job(job_id: web::Path<i32>) -> Result<impl Responder> {
     }
 }
 
+#[put("/jobs/{job_id}")]
+async fn put_job(job_id: web::Path<i32>, conf: web::Data<Conf>) -> Result<impl Responder> {
+    let set = JOB_SET.lock().unwrap();
+    let tmp_res = PostJobRes {
+        id: job_id.clone(),
+        ..Default::default()
+    };
+    let mut job_res = if let Some(job_res) = set.get(&tmp_res) {
+        job_res.clone()
+    } else {
+        raise_err!(err::ErrorKind::ErrNotFound, "Job {} not found.", job_id)
+    };
+    if job_res.state != State::Finished {
+        raise_err!(err::ErrorKind::ErrInvalidState, "Job {} not finished.", job_id)
+    }
+    job_res.updated_time = chrono::Utc::now().to_string();
+    let case_res = judge(&job_res.submission, &conf)?;
+    let prob = conf.check_prob_and_get(job_res.submission.problem_id)?;
+    let job_res = job_res.merge(case_res, prob);
+    upd_job(job_res.clone()).await?;
+    Ok(web::Json(job_res))
+}
+
 #[get("/jobs")]
 async fn get_jobs(info: web::Query<JobQuery>) -> Result<impl Responder> {
     // TODO! cannot use todo!()
     let set = JOB_SET.lock().unwrap();
 
     macro_rules! check_submit {
-        ($job: ident, $info: ident, $e: ident) => {
-            if let Some(e) = &$info.$e {
-                if &$job.submission.$e != e {
+        ($job: ident, $info: ident, $elm: ident) => {
+            if let Some(elm) = &$info.$elm {
+                if &$job.submission.$elm != elm {
                     return false;
                 }
             }

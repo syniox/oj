@@ -1,10 +1,9 @@
 use crate::{
-    conf::{Conf, Language, Problem, ProblemType},
-    db::{upd_jobs, PostJobRes},
+    conf::{Conf, Problem, ProblemType},
+    db::{upd_job, PostJobRes},
     err,
 };
 use actix_web::{post, web, Responder, Result};
-use chrono;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -13,7 +12,7 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PostJob {
     // TODO return bad request
     pub source_code: String,
@@ -23,12 +22,13 @@ pub struct PostJob {
     pub problem_id: i32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum State {
     Queueing,
     Running,
     Finished,
     Canceled,
+    #[default] Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -71,15 +71,7 @@ fn check_contest(conf: &Conf, job: &PostJob) -> Result<(), err::Error> {
     // TODO
     Ok(())
 }
-fn check_prob_and_get(conf: &Conf, id: i32) -> Result<&Problem, err::Error> {
-    for prob in conf.problems.iter() {
-        if id == prob.id {
-            log::info!("id: {}, prob_id: {}", id, prob.id);
-            return Ok(&prob);
-        }
-    }
-    Err(err::Error::new(err::ErrorKind::ErrNotFound, String::new()))
-}
+/*
 fn check_lang_and_get<'a>(conf: &'a Conf, job: &PostJob) -> Result<&'a Language, err::Error> {
     for lang in conf.languages.iter() {
         if lang.name == job.language {
@@ -88,6 +80,7 @@ fn check_lang_and_get<'a>(conf: &'a Conf, job: &PostJob) -> Result<&'a Language,
     }
     Err(err::Error::new(err::ErrorKind::ErrNotFound, String::new()))
 }
+*/
 
 // TODO: unwrap <=> closure
 fn run_cases(dir: tempdir::TempDir, prob: &Problem) -> Vec<CaseRes> {
@@ -162,15 +155,14 @@ fn run_cases(dir: tempdir::TempDir, prob: &Problem) -> Vec<CaseRes> {
     res
 }
 
-fn judge(job: PostJob, conf: &Conf) -> Result<impl Responder> {
+pub fn judge(job: &PostJob, conf: &Conf) -> Result<Vec<CaseRes>> {
     check_contest(&conf, &job)?;
-    let lang = check_lang_and_get(&conf, &job)?;
-    let prob = check_prob_and_get(&conf, job.problem_id)?;
+    let lang = conf.check_lang_and_get(&job.language)?;
+    let prob = conf.check_prob_and_get(job.problem_id)?;
     // Compile
     let dir = tempdir::TempDir::new("oj")?;
     let file_path = dir.path().join(&lang.file_name);
     fs::write(&file_path, &job.source_code)?;
-    //let job_res = PostJobRes::new(job);
 
     let cmd = lang.command.clone();
     let cmd = cmd
@@ -198,57 +190,21 @@ fn judge(job: PostJob, conf: &Conf) -> Result<impl Responder> {
                 ..Default::default()
             });
         }
-        Ok(web::Json(cases))
+        Ok(cases)
     } else {
         // Compilation Success
-        Ok(web::Json(run_cases(dir, prob)))
+        Ok(run_cases(dir, prob))
     }
 }
 
 #[post("/jobs")]
 async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<impl Responder> {
     let job = body.into_inner();
-    check_contest(&conf, &job)?;
-    let lang = check_lang_and_get(&conf, &job)?;
-    let prob = check_prob_and_get(&conf, job.problem_id)?;
-    // Compile
-    let dir = tempdir::TempDir::new("oj")?;
-    let file_path = dir.path().join(&lang.file_name);
-    fs::write(&file_path, &job.source_code)?;
+    let conf = conf.into_inner();
+    let prob = conf.check_prob_and_get(job.problem_id)?;
+    let cases = judge(&job, &conf)?; // TODO async
     let job_res = PostJobRes::new(job);
-
-    let cmd = lang.command.clone();
-    let cmd = cmd
-        .into_iter()
-        .map(|x| match x.as_str() {
-            "%INPUT%" => file_path.to_str().unwrap().to_string(),
-            "%OUTPUT%" => dir.path().join("code").to_str().unwrap().to_string(),
-            _ => x,
-        })
-        .collect::<Vec<String>>();
-    log::info!("cmd: {:?}", cmd);
-    let status = Command::new(&cmd[0]).args(&cmd[1..]).status()?;
-    log::info!("status: {:?},", status);
-
-    let cases = if !status.success() {
-        // Compilation Error
-        let mut cases = vec![CaseRes {
-            result: CaseResult::CompilationError,
-            ..Default::default()
-        }];
-        for id in 1..=prob.cases.len() {
-            cases.push(CaseRes {
-                id: id as i32,
-                result: CaseResult::Waiting,
-                ..Default::default()
-            });
-        }
-        cases
-    } else {
-        // Compilation Success
-        run_cases(dir, prob)
-    };
     let job_res = job_res.merge(cases, prob);
-    upd_jobs(job_res.clone()).await?;
+    upd_job(job_res.clone()).await?;
     Ok(web::Json(job_res))
 }
