@@ -3,10 +3,10 @@ use env_logger;
 use log;
 
 mod conf;
+mod db;
 mod err;
 mod judge;
 mod utils;
-mod db;
 
 #[get("/hello/{name}")]
 async fn greet(name: web::Path<String>) -> impl Responder {
@@ -37,6 +37,7 @@ async fn main() -> std::io::Result<()> {
             .route("/hello", web::get().to(|| async { "Hello World!" }))
             .service(greet)
             .service(judge::post_jobs)
+            .service(db::get_jobs)
             // DO NOT REMOVE: used in automatic testing
             .service(exit)
     })

@@ -1,6 +1,6 @@
 use crate::{
     conf::{Conf, Language, Problem, ProblemType},
-    db::{PostJobRes},
+    db::{upd_jobs, PostJobRes},
     err,
 };
 use actix_web::{post, web, Responder, Result};
@@ -13,7 +13,7 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PostJob {
     // TODO return bad request
     pub source_code: String,
@@ -23,7 +23,7 @@ pub struct PostJob {
     pub problem_id: i32,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum State {
     Queueing,
     Running,
@@ -31,7 +31,7 @@ pub enum State {
     Canceled,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[allow(dead_code)]
 pub enum CaseResult {
     Accepted = 0,
@@ -58,7 +58,7 @@ pub enum CaseResult {
     UnInitialized,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub struct CaseRes {
     pub id: i32,
     pub result: CaseResult,
@@ -172,6 +172,7 @@ async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<im
     let dir = tempdir::TempDir::new("oj")?;
     let file_path = dir.path().join(&lang.file_name);
     fs::write(&file_path, &job.source_code)?;
+    let job_res = PostJobRes::new(job);
 
     let cmd = lang.command.clone();
     let cmd = cmd
@@ -204,6 +205,7 @@ async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<im
         // Compilation Success
         judge(dir, prob)
     };
-    let job_res = PostJobRes::from(job, cases, prob);
+    let job_res = job_res.merge(cases, prob);
+    upd_jobs(job_res.clone()).await?;
     Ok(web::Json(job_res))
 }
