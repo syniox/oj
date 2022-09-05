@@ -1,7 +1,7 @@
+use crate::err;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::err;
 
 fn default_bind_address() -> String {
     "127.0.0.1".to_string()

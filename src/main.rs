@@ -27,7 +27,7 @@ async fn exit() -> impl Responder {
 async fn main() -> std::io::Result<()> {
     let conf = conf::Conf::parse()?;
     let server = conf.server.clone();
-    println!("{:?}", conf);
+    db::init_user();
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     HttpServer::new(move || {
@@ -40,6 +40,8 @@ async fn main() -> std::io::Result<()> {
             .service(db::get_jobs)
             .service(db::get_job)
             .service(db::put_job)
+            .service(db::post_user)
+            .service(db::get_users)
             // DO NOT REMOVE: used in automatic testing
             .service(exit)
     })

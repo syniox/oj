@@ -1,22 +1,23 @@
 use crate::{
     conf::{Conf, Problem},
-    err, err::raise_err,
-    judge::{CaseRes, CaseResult, PostJob, State, judge},
+    err,
+    err::raise_err,
+    judge::{judge, CaseRes, CaseResult, PostJob, State},
 };
-use actix_web::{get, put, web, Responder, Result};
+use actix_web::{get, post, put, web, Responder, Result};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 // use chrono::DateTime;
 
-
-// Judge related
 lazy_static! {
     // TODO: big to small not small to big
     static ref JOB_SET: Arc<Mutex<BTreeSet<PostJobRes>>> = Arc::new(Mutex::new(BTreeSet::new()));
+    static ref USER_VEC: Arc<Mutex<Vec<User>>> = Arc::new(Mutex::new(Vec::new()));
 }
 
+// Judge related
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct PostJobRes {
     id: i32,
@@ -86,7 +87,7 @@ impl std::cmp::Ord for PostJobRes {
     }
 }
 
-// query related
+// Query related
 #[derive(Serialize, Deserialize)]
 struct JobQuery {
     user_id: Option<i32>,
@@ -137,7 +138,11 @@ async fn put_job(job_id: web::Path<i32>, conf: web::Data<Conf>) -> Result<impl R
     };
     drop(set);
     if job_res.state != State::Finished {
-        raise_err!(err::ErrorKind::ErrInvalidState, "Job {} not finished.", job_id)
+        raise_err!(
+            err::ErrorKind::ErrInvalidState,
+            "Job {} not finished.",
+            job_id
+        )
     }
     job_res.updated_time = chrono::Utc::now().to_string();
     let case_res = judge(&job_res.submission, &conf)?;
@@ -149,39 +154,33 @@ async fn put_job(job_id: web::Path<i32>, conf: web::Data<Conf>) -> Result<impl R
 
 #[get("/jobs")]
 async fn get_jobs(info: web::Query<JobQuery>) -> Result<impl Responder> {
-    // TODO! cannot use todo!()
-    let set = JOB_SET.lock().unwrap();
+    let job_set = JOB_SET.lock().unwrap();
+    let user_vec = USER_VEC.lock().unwrap();
 
-    macro_rules! check_submit {
-        ($job: ident, $info: ident, $elm: ident) => {
+    macro_rules! check_job {
+        ($job: tt, $info: ident, $elm: ident) => {
             if let Some(elm) = &$info.$elm {
-                if &$job.submission.$elm != elm {
+                if &$job.$elm != elm {
                     return false;
                 }
             }
         };
     }
-
-    let vec: Vec<PostJobRes> = set
+    let vec: Vec<PostJobRes> = job_set
         .iter()
         .filter(|job| {
-            if let Some(_user_name) = &info.user_name {
-                todo!();
-            }
-            check_submit!(job, info, user_id);
-            check_submit!(job, info, contest_id);
-            check_submit!(job, info, problem_id);
-            check_submit!(job, info, language);
-            if let Some(state) = &info.state {
-                if &job.state != state {
+            if let Some(user_name) = &info.user_name {
+                let vec_user = user_vec.get(job.submission.user_id as usize).unwrap();
+                if &vec_user.name != user_name {
                     return false;
                 }
             }
-            if let Some(result) = &info.result {
-                if &job.result != result {
-                    return false;
-                }
-            }
+            check_job!((job.submission), info, user_id);
+            check_job!((job.submission), info, contest_id);
+            check_job!((job.submission), info, problem_id);
+            check_job!((job.submission), info, language);
+            check_job!(job, info, state);
+            check_job!(job, info, result);
             if let Some(from) = &info.from {
                 if from.cmp(&job.created_time) == std::cmp::Ordering::Greater {
                     return false;
@@ -197,4 +196,68 @@ async fn get_jobs(info: web::Query<JobQuery>) -> Result<impl Responder> {
         .cloned()
         .collect();
     Ok(web::Json(vec))
+}
+
+// User related
+fn nul_user_id() -> i32 {
+    -1
+}
+#[derive(Clone, Deserialize, Serialize)]
+pub struct User {
+    #[serde(default = "nul_user_id")]
+    id: i32,
+    name: String,
+}
+
+pub fn init_user() {
+    let mut users = USER_VEC.lock().unwrap();
+    users.push(User {
+        id: 0,
+        name: "root".to_string(),
+    });
+}
+
+pub fn check_user(id: i32) -> Result<()> {
+    let users = USER_VEC.lock().unwrap();
+    if users.len() > id as usize {
+        Ok(())
+    } else {
+        raise_err!(err::ErrorKind::ErrNotFound, "")
+    }
+}
+
+#[post("/users")]
+//async fn post_user(user: web::Json<User>) -> Result<web::Json<User>> {
+async fn post_user(user: web::Json<User>) -> Result<impl Responder> {
+    let user = user.into_inner();
+    let mut users = USER_VEC.lock().unwrap();
+    let len = users.len();
+    if user.id == -1 {
+        if users.iter().any(|cur| cur.name == user.name) {
+            raise_err!(
+                err::ErrorKind::ErrInvalidArgument,
+                "User name '{}' already exists",
+                user.name
+            )
+        }
+        let new_user = User {
+            id: len as i32,
+            name: user.name,
+        };
+        users.push(new_user.clone());
+        Ok(web::Json(new_user))
+    } else {
+        if let Some(elm) = users.get_mut(user.id as usize) {
+            *elm = user.clone();
+            Ok(web::Json(user))
+        } else {
+            raise_err!(err::ErrorKind::ErrNotFound, "User {} not found.", user.id)
+        }
+    }
+}
+
+#[get("/users")]
+async fn get_users() -> Result<impl Responder> {
+    let users: Vec<User> = USER_VEC.lock().unwrap().clone();
+    Ok(web::Json(users))
 }

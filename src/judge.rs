@@ -1,6 +1,6 @@
 use crate::{
     conf::{Conf, Problem, ProblemType},
-    db::{upd_job, PostJobRes},
+    db::{upd_job, PostJobRes, check_user},
     err,
 };
 use actix_web::{post, web, Responder, Result};
@@ -28,7 +28,8 @@ pub enum State {
     Running,
     Finished,
     Canceled,
-    #[default] Unknown,
+    #[default]
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -71,16 +72,6 @@ fn check_contest(conf: &Conf, job: &PostJob) -> Result<(), err::Error> {
     // TODO
     Ok(())
 }
-/*
-fn check_lang_and_get<'a>(conf: &'a Conf, job: &PostJob) -> Result<&'a Language, err::Error> {
-    for lang in conf.languages.iter() {
-        if lang.name == job.language {
-            return Ok(lang);
-        }
-    }
-    Err(err::Error::new(err::ErrorKind::ErrNotFound, String::new()))
-}
-*/
 
 // TODO: unwrap <=> closure
 fn run_cases(dir: tempdir::TempDir, prob: &Problem) -> Vec<CaseRes> {
@@ -156,6 +147,7 @@ fn run_cases(dir: tempdir::TempDir, prob: &Problem) -> Vec<CaseRes> {
 }
 
 pub fn judge(job: &PostJob, conf: &Conf) -> Result<Vec<CaseRes>> {
+    check_user(job.user_id)?;
     check_contest(&conf, &job)?;
     let lang = conf.check_lang_and_get(&job.language)?;
     let prob = conf.check_prob_and_get(job.problem_id)?;

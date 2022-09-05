@@ -70,10 +70,7 @@ impl error::ResponseError for Error {
 }
 
 macro_rules! raise_err{
-    /* ($err: expr, $fmt: expr, $($args:tt)*) => {
-        return Err(err::Error::new($err, format!($fmt, $($args)*)).into())
-    }*/
-    ($err: expr,  $($args:tt)*) => {
+    ($err: expr, $($args:tt)*) => {
         return Err(err::Error::new($err, format!($($args)*)).into())
     }
 }
