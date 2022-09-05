@@ -3,18 +3,22 @@ use crate::{
     err,
     err::raise_err,
     judge::{judge, CaseRes, CaseResult, PostJob, State},
+    utils::apmax,
 };
 use actix_web::{get, post, put, web, Responder, Result};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 // use chrono::DateTime;
 
 lazy_static! {
-    // TODO: big to small not small to big
+    // job, user: indexed
+    // problem_id: arbitrary
+    // MUST ACQUIRE JOB_SET BEFORE USER_VEC BEFORE CONTESTS
     static ref JOB_SET: Arc<Mutex<BTreeSet<PostJobRes>>> = Arc::new(Mutex::new(BTreeSet::new()));
     static ref USER_VEC: Arc<Mutex<Vec<User>>> = Arc::new(Mutex::new(Vec::new()));
+    static ref CONTESTS: Arc<Mutex<Vec<Contest>>> = Arc::new(Mutex::new(Vec::new()));
 }
 
 // Judge related
@@ -152,6 +156,10 @@ async fn put_job(job_id: web::Path<i32>, conf: web::Data<Conf>) -> Result<impl R
     Ok(web::Json(job_res))
 }
 
+/*fn select_jobs(info: JobQuery) -> Result<Vec<PostJobRes>> {
+
+}*/
+
 #[get("/jobs")]
 async fn get_jobs(info: web::Query<JobQuery>) -> Result<impl Responder> {
     let job_set = JOB_SET.lock().unwrap();
@@ -199,12 +207,12 @@ async fn get_jobs(info: web::Query<JobQuery>) -> Result<impl Responder> {
 }
 
 // User related
-fn nul_user_id() -> i32 {
+const fn nul_id() -> i32 {
     -1
 }
 #[derive(Clone, Deserialize, Serialize)]
 pub struct User {
-    #[serde(default = "nul_user_id")]
+    #[serde(default = "nul_id")]
     id: i32,
     name: String,
 }
@@ -227,12 +235,11 @@ pub fn check_user(id: i32) -> Result<()> {
 }
 
 #[post("/users")]
-//async fn post_user(user: web::Json<User>) -> Result<web::Json<User>> {
 async fn post_user(user: web::Json<User>) -> Result<impl Responder> {
     let user = user.into_inner();
     let mut users = USER_VEC.lock().unwrap();
     let len = users.len();
-    if user.id == -1 {
+    if user.id == nul_id() {
         if users.iter().any(|cur| cur.name == user.name) {
             raise_err!(
                 err::ErrorKind::ErrInvalidArgument,
@@ -260,4 +267,157 @@ async fn post_user(user: web::Json<User>) -> Result<impl Responder> {
 async fn get_users() -> Result<impl Responder> {
     let users: Vec<User> = USER_VEC.lock().unwrap().clone();
     Ok(web::Json(users))
+}
+
+// Contest Related
+#[derive(Clone, Deserialize, Serialize, Default)]
+pub struct Contest {
+    #[serde(default = "nul_id")]
+    id: i32,
+    name: String,
+    from: String,
+    to: String,
+    problem_ids: Vec<i32>,
+    user_ids: Vec<i32>,
+    submission_limit: i32,
+}
+#[derive(Clone, Serialize)]
+pub struct UserRank {
+    user: User,
+    rank: i32,
+    scores: Vec<f64>,
+}
+
+pub fn init_contest(conf: &Conf) {
+    let mut contests = CONTESTS.lock().unwrap();
+    let problem_ids: Vec<i32> = conf.problems.iter().map(|prob| prob.id).collect();
+    contests.push(Contest {
+        problem_ids: problem_ids,
+        ..Default::default()
+    });
+}
+
+#[post("/contests")]
+async fn post_contest(
+    contest: web::Json<Contest>,
+    conf: web::Data<Conf>,
+) -> Result<impl Responder> {
+    let users = USER_VEC.lock().unwrap();
+    let mut contests = CONTESTS.lock().unwrap();
+    // Check contests
+    let contest = contest.into_inner();
+    let invld_prob = contest
+        .problem_ids
+        .iter()
+        .any(|id| conf.problems.iter().any(|prob| prob.id == *id));
+    let invld_user = contest.user_ids.iter().any(|id| users.len() as i32 > *id);
+    if invld_prob || invld_user || contest.id == 0 {
+        // TODO check contest 0 behavior
+        raise_err!(err::ErrorKind::ErrNotFound, "");
+    }
+
+    if contest.id == nul_id() {
+        let len = contests.len();
+        let contest = Contest {
+            id: len as i32,
+            ..contest
+        };
+        contests.push(contest.clone());
+        Ok(web::Json(contest))
+    } else {
+        if let Some(entry) = contests.get_mut(contest.id as usize) {
+            *entry = contest.clone();
+            Ok(web::Json(contest))
+        } else {
+            raise_err!(err::ErrorKind::ErrNotFound, "");
+        }
+    }
+}
+
+#[get("/contests")]
+async fn get_contests() -> Result<impl Responder> {
+    let contests = CONTESTS.lock().unwrap().clone();
+    Ok(web::Json(contests))
+}
+
+#[get("/contests/{id}")]
+async fn get_contest(id: web::Path<i32>) -> Result<impl Responder> {
+    let contests = CONTESTS.lock().unwrap();
+    let id = id.into_inner();
+    match contests.get(id as usize) {
+        Some(contest) => Ok(web::Json(contest.clone())),
+        None => raise_err!(err::ErrorKind::ErrNotFound, "Contest {} not found.", id),
+    }
+}
+
+// TODO: switch to O(nlogn) version?
+// TODO: handle arguments
+
+#[derive(Deserialize)]
+struct RankRule {
+    scoring_rule: Option<String>,
+    tie_breaker: Option<String>
+}
+#[get("/contests/{contest_id}/ranklist")]
+async fn get_ranklist(contest_id: web::Path<i32>, rule: web::Query<RankRule>) -> Result<impl Responder> {
+    let jobs = JOB_SET.lock().unwrap();
+    let users = USER_VEC.lock().unwrap();
+    let contests = CONTESTS.lock().unwrap();
+
+    let id = contest_id.into_inner();
+    let contest = match contests.get(id as usize) {
+        Some(contest) => contest,
+        None => raise_err!(err::ErrorKind::ErrNotFound, "Contest {} not found.", id),
+    };
+    let user_ids: Vec<i32> = match id {
+        0 => (0..users.len() as i32).collect(),
+        _ => contest.user_ids.clone(),
+    };
+    let mut res: Vec<UserRank> = user_ids
+        .iter()
+        .map(|&user_id| {
+            let mut score_map: HashMap<i32, f64> = HashMap::new();
+            for job in jobs.iter() {
+                let sub = &job.submission;
+                if (sub.contest_id == id || id == 0) && sub.user_id == user_id {
+                    score_map
+                        .entry(sub.problem_id)
+                        .and_modify(|s| {
+                            match rule.scoring_rule.as_deref() {
+                                Some("latest") | None => *s = job.score,
+                                Some("highest") => apmax(s, job.score),
+                                _ => unreachable!() 
+                            }
+                        })
+                        .or_insert(job.score);
+                }
+            }
+            let scores: Vec<f64> = contest
+                .problem_ids
+                .iter()
+                .map(|&id| score_map.entry(id).or_default().clone())
+                .collect();
+            UserRank {
+                user: users.get(user_id as usize).unwrap().clone(),
+                rank: 0,
+                scores: scores,
+            }
+        })
+        .collect();
+    res.sort_by(|a, b| {
+        (b.scores.iter().sum::<f64>())
+            .partial_cmp(&a.scores.iter().sum::<f64>())
+            .unwrap()
+    });
+    let (mut lst_score, mut lst_rnk) = (-1f64, 1);
+    for (rank, user_rank) in res.iter_mut().enumerate() {
+        let score: f64 = user_rank.scores.iter().sum();
+        user_rank.rank = if score == lst_score {
+            lst_rnk
+        } else {
+            rank as i32 + 1
+        };
+        (lst_score, lst_rnk) = (score, user_rank.rank)
+    }
+    Ok(web::Json(res))
 }

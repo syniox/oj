@@ -1,6 +1,6 @@
 use crate::{
     conf::{Conf, Problem, ProblemType},
-    db::{upd_job, PostJobRes, check_user},
+    db::{check_user, upd_job, PostJobRes},
     err,
 };
 use actix_web::{post, web, Responder, Result};
