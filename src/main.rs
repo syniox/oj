@@ -3,15 +3,10 @@ use env_logger;
 use log;
 
 mod conf;
+mod db;
 mod err;
 mod judge;
 mod utils;
-
-#[get("/hello/{name}")]
-async fn greet(name: web::Path<String>) -> impl Responder {
-    log::info!(target: "greet_handler", "Greeting {}", name);
-    format!("Hello {name}!")
-}
 
 // DO NOT REMOVE: used in automatic testing
 #[post("/internal/exit")]
@@ -26,16 +21,24 @@ async fn exit() -> impl Responder {
 async fn main() -> std::io::Result<()> {
     let conf = conf::Conf::parse()?;
     let server = conf.server.clone();
-    println!("{:?}", conf);
+    db::init_user();
+    db::init_contest(&conf);
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(conf.clone()))
             .wrap(Logger::default())
-            .route("/hello", web::get().to(|| async { "Hello World!" }))
-            .service(greet)
             .service(judge::post_jobs)
+            .service(db::get_jobs)
+            .service(db::get_job)
+            .service(db::put_job)
+            .service(db::post_user)
+            .service(db::get_users)
+            .service(db::post_contest)
+            .service(db::get_contests)
+            .service(db::get_contest)
+            .service(db::get_ranklist)
             // DO NOT REMOVE: used in automatic testing
             .service(exit)
     })

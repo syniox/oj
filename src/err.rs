@@ -69,6 +69,9 @@ impl error::ResponseError for Error {
     }
 }
 
-pub fn actix_err<T>(kind: ErrorKind, msg: String) -> Result<T, error::Error> {
-    Err(Error::new(kind, msg).into())
+macro_rules! raise_err{
+    ($err: expr, $($args:tt)*) => {
+        return Err(err::Error::new($err, format!($($args)*)).into())
+    }
 }
+pub(crate) use raise_err;

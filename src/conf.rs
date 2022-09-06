@@ -1,3 +1,4 @@
+use crate::err;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -82,5 +83,24 @@ impl Conf {
         let json = std::fs::read_to_string(&args.config)?;
         let conf = serde_json::from_str(&json).unwrap();
         Ok(conf)
+    }
+
+    pub fn check_prob_and_get(&self, id: i32) -> Result<&Problem, err::Error> {
+        for prob in self.problems.iter() {
+            if id == prob.id {
+                log::info!("id: {}, prob_id: {}", id, prob.id);
+                return Ok(&prob);
+            }
+        }
+        err::raise_err!(err::ErrorKind::ErrNotFound, "")
+    }
+
+    pub fn check_lang_and_get(&self, job_lang: &str) -> Result<&Language, err::Error> {
+        for self_lang in self.languages.iter() {
+            if self_lang.name == job_lang {
+                return Ok(self_lang);
+            }
+        }
+        err::raise_err!(err::ErrorKind::ErrNotFound, "")
     }
 }
