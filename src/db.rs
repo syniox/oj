@@ -128,7 +128,7 @@ async fn get_job(job_id: web::Path<i32>) -> Result<impl Responder> {
     }
 }
 
-#[put("/jobs/{job_id}")]
+#[put("/jobs/{job_id}")] // Rejudge after done?
 async fn put_job(job_id: web::Path<i32>, conf: web::Data<Conf>) -> Result<impl Responder> {
     let set = JOB_SET.lock().unwrap();
     let tmp_res = PostJobRes {
@@ -155,10 +155,6 @@ async fn put_job(job_id: web::Path<i32>, conf: web::Data<Conf>) -> Result<impl R
     upd_job(job_res.clone()).await?;
     Ok(web::Json(job_res))
 }
-
-/*fn select_jobs(info: JobQuery) -> Result<Vec<PostJobRes>> {
-
-}*/
 
 #[get("/jobs")]
 async fn get_jobs(info: web::Query<JobQuery>) -> Result<impl Responder> {
@@ -301,6 +297,38 @@ pub fn init_contest(conf: &Conf) {
     });
 }
 
+pub fn check_contest(job: &PostJob) -> Result<impl Responder> {
+    let contests = CONTESTS.lock().unwrap();
+    let jobs = JOB_SET.lock().unwrap();
+    // NOT_FOUND
+    let contest = match contests.get(job.contest_id as usize) {
+        Some(contest) => contest,
+        None => raise_err!(err::ErrorKind::ErrNotFound, ""),
+    };
+    // INVALID_ARGUMENT
+    if !contest.user_ids.iter().any(|id| job.user_id == *id) {
+        raise_err!(err::ErrorKind::ErrInvalidArgument, "")
+    }
+    if !contest.problem_ids.iter().any(|id| job.problem_id == *id) {
+        raise_err!(err::ErrorKind::ErrInvalidArgument, "")
+    }
+    let time = chrono::Utc::now().to_string(); // Or use created_time?
+    if time < contest.from || time > contest.to {
+        raise_err!(err::ErrorKind::ErrInvalidArgument, "")
+    }
+    // RATE_LIMIT
+    let cnt = jobs
+        .iter()
+        .filter(|hist| {
+            hist.submission.contest_id == contest.id && hist.submission.user_id == job.user_id
+        })
+        .count();
+    if cnt as i32 >= contest.submission_limit {
+        raise_err!(err::ErrorKind::ErrRateLimit, "")
+    }
+    Ok("")
+}
+
 #[post("/contests")]
 async fn post_contest(
     contest: web::Json<Contest>,
@@ -313,8 +341,9 @@ async fn post_contest(
     let invld_prob = contest
         .problem_ids
         .iter()
-        .any(|id| conf.problems.iter().any(|prob| prob.id == *id));
-    let invld_user = contest.user_ids.iter().any(|id| users.len() as i32 > *id);
+        .any(|id| !conf.problems.iter().any(|prob| prob.id == *id));
+    let invld_user = contest.user_ids.iter().any(|id| users.len() as i32 <= *id);
+    log::info!("invld_prob: {}, invld_user: {}", invld_prob, invld_user);
     if invld_prob || invld_user || contest.id == 0 {
         // TODO check contest 0 behavior
         raise_err!(err::ErrorKind::ErrNotFound, "");
@@ -340,7 +369,8 @@ async fn post_contest(
 
 #[get("/contests")]
 async fn get_contests() -> Result<impl Responder> {
-    let contests = CONTESTS.lock().unwrap().clone();
+    let mut contests: Vec<_> = CONTESTS.lock().unwrap().clone();
+    contests.drain(0..1);
     Ok(web::Json(contests))
 }
 

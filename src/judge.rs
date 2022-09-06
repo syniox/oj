@@ -1,6 +1,6 @@
 use crate::{
     conf::{Conf, Problem, ProblemType},
-    db::{check_user, upd_job, PostJobRes},
+    db::{check_contest, check_user, upd_job, PostJobRes},
     err,
 };
 use actix_web::{post, web, Responder, Result};
@@ -66,11 +66,6 @@ pub struct CaseRes {
     pub time: u64,
     pub memory: i32,
     pub info: String,
-}
-
-fn check_contest(conf: &Conf, job: &PostJob) -> Result<(), err::Error> {
-    // TODO
-    Ok(())
 }
 
 // TODO: unwrap <=> closure
@@ -148,7 +143,6 @@ fn run_cases(dir: tempdir::TempDir, prob: &Problem) -> Vec<CaseRes> {
 
 pub fn judge(job: &PostJob, conf: &Conf) -> Result<Vec<CaseRes>> {
     check_user(job.user_id)?;
-    check_contest(&conf, &job)?;
     let lang = conf.check_lang_and_get(&job.language)?;
     let prob = conf.check_prob_and_get(job.problem_id)?;
     // Compile
@@ -193,6 +187,8 @@ pub fn judge(job: &PostJob, conf: &Conf) -> Result<Vec<CaseRes>> {
 async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<impl Responder> {
     let job = body.into_inner();
     let conf = conf.into_inner();
+    check_contest(&job)?;
+    log::info!("job: {:?}", job);
     let prob = conf.check_prob_and_get(job.problem_id)?;
     let job_res = PostJobRes::new(job.clone());
     let cases = judge(&job, &conf)?; // TODO async
