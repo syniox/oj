@@ -194,8 +194,8 @@ async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<im
     let job = body.into_inner();
     let conf = conf.into_inner();
     let prob = conf.check_prob_and_get(job.problem_id)?;
+    let job_res = PostJobRes::new(job.clone());
     let cases = judge(&job, &conf)?; // TODO async
-    let job_res = PostJobRes::new(job);
     let job_res = job_res.merge(cases, prob);
     upd_job(job_res.clone()).await?;
     Ok(web::Json(job_res))

@@ -210,7 +210,7 @@ async fn get_jobs(info: web::Query<JobQuery>) -> Result<impl Responder> {
 const fn nul_id() -> i32 {
     -1
 }
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 pub struct User {
     #[serde(default = "nul_id")]
     id: i32,
@@ -281,10 +281,14 @@ pub struct Contest {
     user_ids: Vec<i32>,
     submission_limit: i32,
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub struct UserRank {
     user: User,
     rank: i32,
+    #[serde(skip)]
+    sub_cnt: i32,
+    #[serde(skip)]
+    sub_time: String,
     scores: Vec<f64>,
 }
 
@@ -351,15 +355,16 @@ async fn get_contest(id: web::Path<i32>) -> Result<impl Responder> {
 }
 
 // TODO: switch to O(nlogn) version?
-// TODO: handle arguments
-
 #[derive(Deserialize)]
 struct RankRule {
     scoring_rule: Option<String>,
-    tie_breaker: Option<String>
+    tie_breaker: Option<String>,
 }
 #[get("/contests/{contest_id}/ranklist")]
-async fn get_ranklist(contest_id: web::Path<i32>, rule: web::Query<RankRule>) -> Result<impl Responder> {
+async fn get_ranklist(
+    contest_id: web::Path<i32>,
+    rule: web::Query<RankRule>,
+) -> Result<impl Responder> {
     let jobs = JOB_SET.lock().unwrap();
     let users = USER_VEC.lock().unwrap();
     let contests = CONTESTS.lock().unwrap();
@@ -369,27 +374,38 @@ async fn get_ranklist(contest_id: web::Path<i32>, rule: web::Query<RankRule>) ->
         Some(contest) => contest,
         None => raise_err!(err::ErrorKind::ErrNotFound, "Contest {} not found.", id),
     };
-    let user_ids: Vec<i32> = match id {
+    let mut user_ids: Vec<i32> = match id {
         0 => (0..users.len() as i32).collect(),
         _ => contest.user_ids.clone(),
     };
+    user_ids.sort();
     let mut res: Vec<UserRank> = user_ids
         .iter()
         .map(|&user_id| {
             let mut score_map: HashMap<i32, f64> = HashMap::new();
+            let (mut sub_cnt, mut sub_time) = (0, String::new());
             for job in jobs.iter() {
                 let sub = &job.submission;
                 if (sub.contest_id == id || id == 0) && sub.user_id == user_id {
+                    let mut updated = true;
                     score_map
                         .entry(sub.problem_id)
-                        .and_modify(|s| {
-                            match rule.scoring_rule.as_deref() {
-                                Some("latest") | None => *s = job.score,
-                                Some("highest") => apmax(s, job.score),
-                                _ => unreachable!() 
+                        .and_modify(|s| match rule.scoring_rule.as_deref() {
+                            Some("latest") | None => *s = job.score,
+                            Some("highest") => {
+                                if *s < job.score {
+                                    *s = job.score;
+                                } else {
+                                    updated = false;
+                                }
                             }
+                            _ => unreachable!(),
                         })
                         .or_insert(job.score);
+                    sub_cnt += 1;
+                    if updated {
+                        apmax(&mut sub_time, job.created_time.clone());
+                    }
                 }
             }
             let scores: Vec<f64> = contest
@@ -397,27 +413,46 @@ async fn get_ranklist(contest_id: web::Path<i32>, rule: web::Query<RankRule>) ->
                 .iter()
                 .map(|&id| score_map.entry(id).or_default().clone())
                 .collect();
+            if &sub_time == "" {
+                sub_time = String::from("9");
+            }
             UserRank {
                 user: users.get(user_id as usize).unwrap().clone(),
                 rank: 0,
-                scores: scores,
+                scores,
+                sub_cnt,
+                sub_time,
             }
         })
         .collect();
-    res.sort_by(|a, b| {
-        (b.scores.iter().sum::<f64>())
+    let rank_cmp = |a: &UserRank, b: &UserRank, tie_breaker: &Option<String>| {
+        let res = (b.scores.iter().sum::<f64>())
             .partial_cmp(&a.scores.iter().sum::<f64>())
-            .unwrap()
-    });
-    let (mut lst_score, mut lst_rnk) = (-1f64, 1);
-    for (rank, user_rank) in res.iter_mut().enumerate() {
-        let score: f64 = user_rank.scores.iter().sum();
-        user_rank.rank = if score == lst_score {
-            lst_rnk
+            .unwrap();
+        if std::cmp::Ordering::Equal == res {
+            match tie_breaker.as_deref() {
+                None => res,
+                Some("submission_time") => a.sub_time.cmp(&b.sub_time),
+                Some("submission_count") => a.sub_cnt.cmp(&b.sub_cnt),
+                Some("user_id") => a.user.id.cmp(&b.user.id),
+                Some(_) => unreachable!(),
+            }
         } else {
-            rank as i32 + 1
+            res
+        }
+    };
+    res.sort_by(|a, b| rank_cmp(a, b, &rule.tie_breaker));
+
+    res[0].rank = 1;
+    log::info!("{}: {}", res[0].user.id, res[0].sub_time);
+    for i in 1..res.len() {
+        // take for granted that user_id is increasing
+        let diff = rank_cmp(&res[i], &res[i - 1], &rule.tie_breaker) != std::cmp::Ordering::Equal;
+        log::info!("{}: {}", res[i].user.id, res[i].sub_time);
+        res[i].rank = match diff {
+            true => i as i32 + 1,
+            false => res[i - 1].rank,
         };
-        (lst_score, lst_rnk) = (score, user_rank.rank)
     }
     Ok(web::Json(res))
 }
