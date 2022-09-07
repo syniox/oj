@@ -21,8 +21,8 @@ async fn exit() -> impl Responder {
 async fn main() -> std::io::Result<()> {
     let conf = conf::Conf::parse()?;
     let server = conf.server.clone();
-    db::init_user();
     db::init_contest(&conf);
+    db::init_user();
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     HttpServer::new(move || {

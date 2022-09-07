@@ -215,6 +215,8 @@ pub struct User {
 
 pub fn init_user() {
     let mut users = USER_VEC.lock().unwrap();
+    let mut contests = CONTESTS.lock().unwrap();
+    contests[0].user_ids.push(0);
     users.push(User {
         id: 0,
         name: "root".to_string(),
@@ -234,6 +236,7 @@ pub fn check_user(id: i32) -> Result<()> {
 async fn post_user(user: web::Json<User>) -> Result<impl Responder> {
     let user = user.into_inner();
     let mut users = USER_VEC.lock().unwrap();
+    let mut contests = CONTESTS.lock().unwrap();
     let len = users.len();
     if user.id == nul_id() {
         if users.iter().any(|cur| cur.name == user.name) {
@@ -248,6 +251,7 @@ async fn post_user(user: web::Json<User>) -> Result<impl Responder> {
             name: user.name,
         };
         users.push(new_user.clone());
+        contests[0].user_ids.push(users.len() as i32 - 1);
         Ok(web::Json(new_user))
     } else {
         if let Some(elm) = users.get_mut(user.id as usize) {
@@ -293,28 +297,32 @@ pub fn init_contest(conf: &Conf) {
     let problem_ids: Vec<i32> = conf.problems.iter().map(|prob| prob.id).collect();
     contests.push(Contest {
         problem_ids: problem_ids,
+        from: chrono::Utc::now().to_string(),
+        to: String::from("99999999"),
+        submission_limit: 99999999,
         ..Default::default()
     });
 }
 
 pub fn check_contest(job: &PostJob) -> Result<impl Responder> {
+    use err::ErrorKind::*;
     let contests = CONTESTS.lock().unwrap();
     let jobs = JOB_SET.lock().unwrap();
     // NOT_FOUND
     let contest = match contests.get(job.contest_id as usize) {
         Some(contest) => contest,
-        None => raise_err!(err::ErrorKind::ErrNotFound, ""),
+        None => raise_err!(ErrNotFound, ""),
     };
     // INVALID_ARGUMENT
     if !contest.user_ids.iter().any(|id| job.user_id == *id) {
-        raise_err!(err::ErrorKind::ErrInvalidArgument, "")
+        raise_err!(ErrInvalidArgument, "user {} not found", job.user_id);
     }
     if !contest.problem_ids.iter().any(|id| job.problem_id == *id) {
-        raise_err!(err::ErrorKind::ErrInvalidArgument, "")
+        raise_err!(ErrInvalidArgument, "prob {} not found", job.problem_id);
     }
     let time = chrono::Utc::now().to_string(); // Or use created_time?
     if time < contest.from || time > contest.to {
-        raise_err!(err::ErrorKind::ErrInvalidArgument, "")
+        raise_err!(ErrInvalidArgument, "bad submission time");
     }
     // RATE_LIMIT
     let cnt = jobs
@@ -324,7 +332,7 @@ pub fn check_contest(job: &PostJob) -> Result<impl Responder> {
         })
         .count();
     if cnt as i32 >= contest.submission_limit {
-        raise_err!(err::ErrorKind::ErrRateLimit, "")
+        raise_err!(ErrRateLimit, "")
     }
     Ok("")
 }

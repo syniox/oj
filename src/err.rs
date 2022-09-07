@@ -69,7 +69,7 @@ impl error::ResponseError for Error {
     }
 }
 
-macro_rules! raise_err{
+macro_rules! raise_err {
     ($err: expr, $($args:tt)*) => {
         return Err(err::Error::new($err, format!($($args)*)).into())
     }
