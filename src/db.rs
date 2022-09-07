@@ -48,6 +48,17 @@ impl PostJobRes {
             cases: vec![],
         }
     }
+    pub fn new_with_cases(job: PostJob, prob: &Problem) -> Self {
+        let mut res = Self::new(job);
+        res.cases = (0..=prob.cases.len())
+            .map(|id| CaseRes {
+                id: id as i32,
+                result: CaseResult::Waiting,
+                ..Default::default()
+            })
+            .collect();
+        res
+    }
 
     pub fn merge(mut self, cases: Vec<CaseRes>, prob: &Problem) -> Self {
         let mut result = CaseResult::Accepted;

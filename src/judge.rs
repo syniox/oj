@@ -142,7 +142,6 @@ fn run_cases(dir: tempdir::TempDir, prob: &Problem) -> Vec<CaseRes> {
 }
 
 pub fn judge(job: &PostJob, conf: &Conf) -> Result<Vec<CaseRes>> {
-    check_user(job.user_id)?;
     let lang = conf.check_lang_and_get(&job.language)?;
     let prob = conf.check_prob_and_get(job.problem_id)?;
     // Compile
@@ -185,14 +184,20 @@ pub fn judge(job: &PostJob, conf: &Conf) -> Result<Vec<CaseRes>> {
 
 #[post("/jobs")]
 async fn post_jobs(body: web::Json<PostJob>, conf: web::Data<Conf>) -> Result<impl Responder> {
+    use tokio::task;
     let job = body.into_inner();
     let conf = conf.into_inner();
     check_contest(&job)?;
+    check_user(job.user_id)?;
     log::info!("job: {:?}", job);
     let prob = conf.check_prob_and_get(job.problem_id)?;
-    let job_res = PostJobRes::new(job.clone());
-    let cases = judge(&job, &conf)?; // TODO async
-    let job_res = job_res.merge(cases, prob);
-    upd_job(job_res.clone()).await?;
+    let job_res = PostJobRes::new_with_cases(job.clone(), &prob);
+    let job_res_cloned = job_res.clone();
+    task::spawn(async move {
+        let cases = judge(&job, &conf).unwrap(); // TODO async
+        let prob = conf.check_prob_and_get(job.problem_id).unwrap();
+        let job_res = job_res_cloned.merge(cases, prob);
+        upd_job(job_res.clone()).await.unwrap();
+    });
     Ok(web::Json(job_res))
 }
